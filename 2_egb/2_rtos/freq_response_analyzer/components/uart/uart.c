@@ -108,19 +108,19 @@ static void procesar_comando(const char *cmd)
 
     if (strcmp(cmd, "start") == 0)
     {
-        enviar_evento_menu(MENU_EVT_BTN_START);
+        enviar_evento_menu(MENU_EVT_START);
         return;
     }
 
     if (strcmp(cmd, "pause") == 0)
     {
-        enviar_evento_menu(MENU_EVT_BTN_PAUSE);
+        enviar_evento_menu(MENU_EVT_PAUSE);
         return;
     }
 
     if (strcmp(cmd, "cancel") == 0)
     {
-        enviar_evento_menu(MENU_EVT_BTN_CANCEL);
+        enviar_evento_menu(MENU_EVT_CANCEL);
         return;
     }
 
@@ -137,9 +137,12 @@ static void procesar_set(const char *nombre_param, uint32_t value)
         }
 
         menu_event_msg_t ev = {
-            .type  = MENU_EVT_CONFIG_SET,
-            .param = TABLA_PARAMS[i].param,
-            .value = value,
+            .type   = MENU_EVT_CONFIG_SET,
+            .origin = EVENT_ORIGIN_UART,
+            .set = {
+                .param = TABLA_PARAMS[i].param,
+                .value = value,
+            },
         };
         xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
         return;
@@ -150,7 +153,10 @@ static void procesar_set(const char *nombre_param, uint32_t value)
 
 static void enviar_evento_menu(menu_evt_e evento)
 {
-    menu_event_msg_t ev = {.type = evento};
+    menu_event_msg_t ev = {
+        .type = evento,
+        .origin = EVENT_ORIGIN_UART,
+    };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }
 
@@ -167,6 +173,11 @@ static void procesar_queue_uart_tx(void)
 
     while (xQueueReceive(queue_uart_tx, &tx, 0) == pdTRUE)
     {
+        if (tx.type != UART_TX_POINT)
+        {
+            ESP_LOGW(TAG, "tipo de mensaje uart_tx no soportado: %d", tx.type);
+            continue;
+        }
         formatear_uart_tx(&tx, buf, sizeof(buf), &len);
         enviar_uart(buf, len);
     }
@@ -174,5 +185,5 @@ static void procesar_queue_uart_tx(void)
 
 static void formatear_uart_tx(const uart_tx_msg_t *tx, char *buf, size_t buf_len, int *len)
 {
-    *len = snprintf(buf, buf_len, "POINT freq=%lu db=%.2f\n", tx->freq_hz, tx->db);
+    *len = snprintf(buf, buf_len, "POINT freq=%lu db=%.2f\n", tx->point.freq_hz, tx->point.db);
 }

@@ -123,9 +123,12 @@ static void kb_event_cb(lv_event_t *e)
         if (strlen(buf_entrada) > 0)
         {
             menu_event_msg_t ev = {
-                .type  = MENU_EVT_CONFIG_SET,
-                .param = param_activo,
-                .value = (uint32_t)strtoul(buf_entrada, NULL, 10),
+                .type   = MENU_EVT_CONFIG_SET,
+                .origin = EVENT_ORIGIN_LOCAL,
+                .set = {
+                    .param = param_activo,
+                    .value = (uint32_t)strtoul(buf_entrada, NULL, 10),
+                },
             };
             xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
         }

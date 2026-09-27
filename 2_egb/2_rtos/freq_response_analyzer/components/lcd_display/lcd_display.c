@@ -55,7 +55,7 @@ static lv_obj_t **val_labels_config[] = {
     &ui_lblvalue3, &ui_lblvalue4};
 
 static const char *TEXTO_ERROR_SWEEP[] = {
-    "", // SWEEP_START_OK, no se usa
+    "", // CONFIG_OK, no se usa
     "Frecuencia inicial fuera de rango (10 - 99999 Hz)",
     "Frecuencia final fuera de rango (11 - 100000 Hz)",
     "La frecuencia inicial debe ser menor que la final",
@@ -69,7 +69,7 @@ static void lcd_init(void);
 static void lvgl_init(void);
 static void touch_init(void);
 static void mostrar_config_value(sweep_param_e param, uint32_t value);
-static void mostrar_popup_error(sweep_start_result_e motivo);
+static void mostrar_popup_error(config_result_e motivo);
 static void swchart_actualizar_escala_frecuencia(uint32_t frec_inicio, uint32_t frec_final);
 static void swchart_reiniciar(uint32_t puntos);
 static void swchart_agregar_punto(float db);
@@ -222,26 +222,24 @@ void task_lcd_display(void *pvParameters)
             switch (msg.type)
             {
             case DISPLAY_MSG_CONFIG_VALUE:
-                mostrar_config_value(msg.param, msg.value);
+                mostrar_config_value(msg.value.param, msg.value.value);
                 break;
-            case DISPLAY_MSG_SWEEP_START_OK:
-                swchart_actualizar_escala_frecuencia(msg.frec_inicio, msg.frec_final);
-                swchart_reiniciar(msg.puntos);
-                break;
-            case DISPLAY_MSG_SWEEP_CONFIG_ERROR:
-                mostrar_popup_error(msg.motivo);
+            case DISPLAY_MSG_CONFIG_ERROR:
+                mostrar_popup_error(msg.error);
                 break;
             case DISPLAY_MSG_SWEEP_POINT:
-                ESP_LOGI(TAG, "punto recibido: %lu Hz, %.2f dB", msg.freq_hz, msg.db);
-                swchart_agregar_punto(msg.db);
+                ESP_LOGI(TAG, "punto recibido: %lu Hz, %.2f dB", msg.point.freq_hz, msg.point.db);
+                swchart_agregar_punto(msg.point.db);
                 break;
             case DISPLAY_MSG_SHOW_SWEEP:
+                swchart_actualizar_escala_frecuencia(msg.config.frec_inicio, msg.config.frec_final);
+                swchart_reiniciar(msg.config.puntos);
+                lv_label_set_text(ui_lblbtnpausar, "PAUSAR");
+                lv_label_set_text(ui_lblbtncancelar, "CANCELAR");
                 lv_anim_resume(swindicator_anim);
                 lv_disp_load_scr(ui_scrsweep);
                 break;
             case DISPLAY_MSG_SHOW_CONFIG:
-                lv_label_set_text(ui_lblbtnpausar, "PAUSAR");
-                lv_label_set_text(ui_lblbtncancelar, "CANCELAR");
                 lv_disp_load_scr(ui_scrconfig);
                 break;
             case DISPLAY_MSG_SHOW_PAUSE:
@@ -294,7 +292,7 @@ static void mostrar_config_value(sweep_param_e param, uint32_t value)
     lv_label_set_text(*val_labels_config[param], tmp);
 }
 
-static void mostrar_popup_error(sweep_start_result_e motivo)
+static void mostrar_popup_error(config_result_e motivo)
 {
     lv_label_set_text(ui_uicfgpopuplbl, TEXTO_ERROR_SWEEP[motivo]);
     lv_obj_remove_flag(ui_uicfgpopup, LV_OBJ_FLAG_HIDDEN);

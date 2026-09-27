@@ -183,21 +183,24 @@ static void ejecutar_barrido(const sweep_config_t *config)
             }
         }        
 
-        display_msg_t msg_disp = {
-            .type = DISPLAY_MSG_SWEEP_POINT,
+        sweep_point_t punto = {
+            .index = i,
             .freq_hz = frec_hz,
             .db = db,
         };
+
+        display_msg_t msg_disp = {
+            .type = DISPLAY_MSG_SWEEP_POINT,
+            .point = punto,
+        };
         xQueueSend(queue_display, &msg_disp, portMAX_DELAY);
 
-        if (frec_hz != frec_anterior) //no enviar puntos repetidos por UART
-        {
-            uart_tx_msg_t msg_uart = {
-                .freq_hz = frec_hz,
-                .db = db,
-            };
-            xQueueSend(queue_uart_tx, &msg_uart, portMAX_DELAY);
-        }
+        // se envian todos los puntos, incluso los repetidos, para que el receptor detecte faltantes por el indice
+        uart_tx_msg_t msg_uart = {
+            .type = UART_TX_POINT,
+            .point = punto,
+        };
+        xQueueSend(queue_uart_tx, &msg_uart, portMAX_DELAY);
 
         frec_anterior = frec_hz;
         db_anterior = db;
@@ -206,6 +209,9 @@ static void ejecutar_barrido(const sweep_config_t *config)
     ad9833_disable_output();
     ESP_LOGI(TAG, "barrido finalizado");
 
-    menu_event_msg_t ev = {.type = MENU_EVT_SWEEP_FINISHED};
+    menu_event_msg_t ev = {
+        .type = MENU_EVT_SWEEP_FINISHED,
+        .origin = EVENT_ORIGIN_LOCAL,
+    };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }

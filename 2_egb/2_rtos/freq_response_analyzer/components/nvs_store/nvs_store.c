@@ -93,15 +93,10 @@ static void cargar_config(void)
 
 static void enviar_config_a_menu(const sweep_config_t *config)
 {
-    uint32_t valores[] = {config->frec_inicio, config->frec_final, config->puntos, config->tiempo};
-
-    for (sweep_param_e param = 0; param <= 3; param++)
-    {
-        menu_event_msg_t ev = {
-            .type = MENU_EVT_CONFIG_SET,
-            .param = param,
-            .value = valores[param],
-        };
-        xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
-    }
+    menu_event_msg_t ev = {
+        .type = MENU_EVT_CONFIG_LOADED,
+        .origin = EVENT_ORIGIN_LOCAL,
+        .config = *config,
+    };
+    xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }

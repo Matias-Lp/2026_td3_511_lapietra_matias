@@ -32,8 +32,11 @@ static uint32_t *campo[] = {
 
 // --- Prototipos privados ---
 static void procesar_config_set(sweep_param_e param, uint32_t value);
+static void procesar_config_loaded(const sweep_config_t *config_nvs);
+static void enviar_valor_display(sweep_param_e param);
+static bool en_rango(sweep_param_e param, uint32_t value);
 static void procesar_sweep_start(void);
-static sweep_start_result_e validar_config_completa(void);
+static config_result_e validar_config_completa(void);
 static void enviar_msg_display(display_msg_type_e type);
 static void enviar_cmd_sweep(sweep_cmd_e cmd_tipo);
 static void enviar_cmd_nvs_load(void);
@@ -59,9 +62,15 @@ void task_menu_config(void *pvParameters)
             switch (ev.type)
             {
             case MENU_EVT_CONFIG_SET:
-                procesar_config_set(ev.param, ev.value);
+                procesar_config_set(ev.set.param, ev.set.value);
                 break;
-            case MENU_EVT_BTN_START:
+            case MENU_EVT_CONFIG_GET:
+                // todavia no implementado
+                break;
+            case MENU_EVT_CONFIG_LOADED:
+                procesar_config_loaded(&ev.config);
+                break;
+            case MENU_EVT_START:
                 if (estado_barrido == CONFIGURACION)
                 {
                     procesar_sweep_start();
@@ -70,8 +79,13 @@ void task_menu_config(void *pvParameters)
                 {
                     reanudar();
                 }
+                else if (estado_barrido == BARRIDO_FINALIZADO && ev.origin == EVENT_ORIGIN_UART)
+                {
+                    // Por UART se reinicia el barrido sin pasar pantalla de configuracion
+                    procesar_sweep_start();
+                }
                 break;
-            case MENU_EVT_BTN_PAUSE:
+            case MENU_EVT_PAUSE:
                 if (estado_barrido == BARRIDO_INICIADO)
                 {
                     pausar();
@@ -81,7 +95,7 @@ void task_menu_config(void *pvParameters)
                     reanudar();
                 }
                 break;
-            case MENU_EVT_BTN_CANCEL:
+            case MENU_EVT_CANCEL:
                 if (estado_barrido == BARRIDO_INICIADO || estado_barrido == BARRIDO_PAUSADO)
                 {
                     cancelar();
@@ -128,16 +142,16 @@ void task_menu_config(void *pvParameters)
 
 static void procesar_config_set(sweep_param_e param, uint32_t value)
 {
-    if (value < MIN[param] || value > MAX[param])
+    if (!en_rango(param, value))
     {
         ESP_LOGW(TAG, "valor fuera de rango: param=%d value=%lu, se mantiene el valor anterior", param, value);
 
         display_msg_t msg_error = {
-            .type = DISPLAY_MSG_SWEEP_CONFIG_ERROR,
-            .motivo = (param == SWEEP_PARAM_FREC_INICIO) ? SWEEP_START_ERR_FSTART_RANGE :
-                      (param == SWEEP_PARAM_FREC_FINAL) ? SWEEP_START_ERR_FSTOP_RANGE :
-                      (param == SWEEP_PARAM_PUNTOS) ? SWEEP_START_ERR_POINTS_RANGE :
-                      SWEEP_START_ERR_SETTLE_TIME_RANGE,
+            .type = DISPLAY_MSG_CONFIG_ERROR,
+            .error = (param == SWEEP_PARAM_FREC_INICIO) ? CONFIG_ERR_FSTART_RANGE :
+                     (param == SWEEP_PARAM_FREC_FINAL) ? CONFIG_ERR_FSTOP_RANGE :
+                     (param == SWEEP_PARAM_PUNTOS) ? CONFIG_ERR_POINTS_RANGE :
+                     CONFIG_ERR_SETTLE_TIME_RANGE,
         };
         xQueueSend(queue_display, &msg_error, portMAX_DELAY);
     }
@@ -154,52 +168,70 @@ static void procesar_config_set(sweep_param_e param, uint32_t value)
     }
 
     // Se reenvia el valor nuevo o el anterior si estaba fuera de rango
+    enviar_valor_display(param);
+}
+
+static void procesar_config_loaded(const sweep_config_t *config_nvs)
+{
+    if (en_rango(SWEEP_PARAM_FREC_INICIO, config_nvs->frec_inicio) &&
+        en_rango(SWEEP_PARAM_FREC_FINAL, config_nvs->frec_final) &&
+        en_rango(SWEEP_PARAM_PUNTOS, config_nvs->puntos) &&
+        en_rango(SWEEP_PARAM_TIEMPO, config_nvs->tiempo))
+    {
+        config = *config_nvs;
+    }
+    else
+    {
+        ESP_LOGW(TAG, "config de NVS fuera de rango, se usan todos los valores por defecto");
+    }
+
+    enviar_valor_display(SWEEP_PARAM_FREC_INICIO);
+    enviar_valor_display(SWEEP_PARAM_FREC_FINAL);
+    enviar_valor_display(SWEEP_PARAM_PUNTOS);
+    enviar_valor_display(SWEEP_PARAM_TIEMPO);
+}
+
+static void enviar_valor_display(sweep_param_e param)
+{
     display_msg_t msg = {
         .type = DISPLAY_MSG_CONFIG_VALUE,
-        .param = param,
-        .value = *campo[param],
+        .value = {
+            .param = param,
+            .value = *campo[param],
+        },
     };
     xQueueSend(queue_display, &msg, portMAX_DELAY);
 }
 
-static sweep_start_result_e validar_config_completa(void)
+static bool en_rango(sweep_param_e param, uint32_t value)
 {
-    if (config.frec_inicio < MIN[SWEEP_PARAM_FREC_INICIO] || config.frec_inicio > MAX[SWEEP_PARAM_FREC_INICIO])
-    {
-        return SWEEP_START_ERR_FSTART_RANGE;
-    }
+    return value >= MIN[param] && value <= MAX[param];
+}
 
-    if (config.frec_final < MIN[SWEEP_PARAM_FREC_FINAL] || config.frec_final > MAX[SWEEP_PARAM_FREC_FINAL])
-    {
-        return SWEEP_START_ERR_FSTOP_RANGE;
-    }
-
+// Solo validacion cruzada: el rango de cada parametro ya se valida en set y al cargar de NVS
+static config_result_e validar_config_completa(void)
+{
     if (config.frec_inicio >= config.frec_final)
     {
-        return SWEEP_START_ERR_FRANGE;
-    }
-
-    if (config.puntos < MIN[SWEEP_PARAM_PUNTOS] || config.puntos > MAX[SWEEP_PARAM_PUNTOS])
-    {
-        return SWEEP_START_ERR_POINTS_RANGE;
+        return CONFIG_ERR_FRANGE;
     }
 
     // Tiempo de asentamiento minimo esta definido por 1/4 de periodo de la frecuencia inicial, redondeado hacia arriba
     uint32_t settle_min_ms = (250 + config.frec_inicio - 1) / config.frec_inicio; // redondeo hacia arriba
     if (config.tiempo < settle_min_ms)
     {
-        return SWEEP_START_ERR_SETTLE_TIME_LOW;
+        return CONFIG_ERR_SETTLE_TIME_LOW;
     }
 
-    return SWEEP_START_OK;
+    return CONFIG_OK;
 }
 
 static void procesar_sweep_start(void)
 {
-    sweep_start_result_e resultado = validar_config_completa();
+    config_result_e resultado = validar_config_completa();
     display_msg_t msg = {0};
 
-    if (resultado == SWEEP_START_OK)
+    if (resultado == CONFIG_OK)
     {
         ESP_LOGI(TAG, "configuracion valida, iniciando barrido");
 
@@ -211,24 +243,17 @@ static void procesar_sweep_start(void)
 
         estado_barrido = BARRIDO_INICIADO;
 
-        msg.type = DISPLAY_MSG_SWEEP_START_OK;
-        msg.frec_inicio = config.frec_inicio;
-        msg.frec_final = config.frec_final;
-        msg.puntos = config.puntos;
+        msg.type = DISPLAY_MSG_SHOW_SWEEP;
+        msg.config = config;
     }
     else
     {
         ESP_LOGW(TAG, "configuracion invalida para iniciar barrido: %d", resultado);
-        msg.type = DISPLAY_MSG_SWEEP_CONFIG_ERROR;
-        msg.motivo = resultado;
+        msg.type = DISPLAY_MSG_CONFIG_ERROR;
+        msg.error = resultado;
     }
 
     xQueueSend(queue_display, &msg, portMAX_DELAY);
-
-    if (resultado == SWEEP_START_OK)
-    {
-        enviar_msg_display(DISPLAY_MSG_SHOW_SWEEP);
-    }
 }
 
 static void enviar_msg_display(display_msg_type_e type)
