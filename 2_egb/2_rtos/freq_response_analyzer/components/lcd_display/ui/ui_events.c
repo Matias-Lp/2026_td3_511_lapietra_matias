@@ -18,7 +18,7 @@ void ui_event_btn_start(lv_event_t *e)
 void ui_event_btn_pausar(lv_event_t *e)
 {
     menu_event_msg_t ev = {
-        .type = MENU_EVT_PAUSE,
+        .type = MENU_EVT_BTN_PAUSE,
         .origin = EVENT_ORIGIN_LOCAL,
     };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);

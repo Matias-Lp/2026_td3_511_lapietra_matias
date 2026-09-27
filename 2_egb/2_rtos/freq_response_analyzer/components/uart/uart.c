@@ -118,6 +118,12 @@ static void procesar_comando(const char *cmd)
         return;
     }
 
+    if (strcmp(cmd, "resume") == 0)
+    {
+        enviar_evento_menu(MENU_EVT_RESUME);
+        return;
+    }
+
     if (strcmp(cmd, "cancel") == 0)
     {
         enviar_evento_menu(MENU_EVT_CANCEL);

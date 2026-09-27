@@ -77,7 +77,9 @@ typedef enum
     MENU_EVT_CONFIG_GET,     // consulta de un parametro o de toda la config (get)
     MENU_EVT_CONFIG_LOADED,  // configuracion completa leida de NVS
     MENU_EVT_START,          // iniciar barrido
-    MENU_EVT_PAUSE,          // pausar/reanudar barrido
+    MENU_EVT_PAUSE,          // pausar barrido
+    MENU_EVT_RESUME,         // reanudar barrido pausado
+    MENU_EVT_BTN_PAUSE,      // boton de pausa de la pantalla, alterna pausar/reanudar segun el estado
     MENU_EVT_CANCEL,       // cancelar barrido/volver a configurar
     MENU_EVT_BTN1,           // boton fisico 1
     MENU_EVT_BTN2,           // boton fisico 2

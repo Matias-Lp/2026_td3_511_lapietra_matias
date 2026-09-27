@@ -75,10 +75,6 @@ void task_menu_config(void *pvParameters)
                 {
                     procesar_sweep_start();
                 }
-                else if (estado_barrido == BARRIDO_PAUSADO)
-                {
-                    reanudar();
-                }
                 else if (estado_barrido == BARRIDO_FINALIZADO && ev.origin == EVENT_ORIGIN_UART)
                 {
                     // Por UART se reinicia el barrido sin pasar pantalla de configuracion
@@ -86,6 +82,18 @@ void task_menu_config(void *pvParameters)
                 }
                 break;
             case MENU_EVT_PAUSE:
+                if (estado_barrido == BARRIDO_INICIADO)
+                {
+                    pausar();
+                }
+                break;
+            case MENU_EVT_RESUME:
+                if (estado_barrido == BARRIDO_PAUSADO)
+                {
+                    reanudar();
+                }
+                break;
+            case MENU_EVT_BTN_PAUSE:
                 if (estado_barrido == BARRIDO_INICIADO)
                 {
                     pausar();
