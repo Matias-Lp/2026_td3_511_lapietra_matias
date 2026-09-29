@@ -178,8 +178,9 @@ static void ejecutar_barrido(const sweep_config_t *config)
         {            
             if (medir_punto(frec_hz, config->tiempo, &db))
             {
+                ad9833_disable_output();
                 ESP_LOGI(TAG, "barrido cancelado");
-                break;
+                return;
             }
         }        
 
