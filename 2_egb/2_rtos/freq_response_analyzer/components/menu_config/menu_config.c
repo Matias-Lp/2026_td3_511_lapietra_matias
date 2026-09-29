@@ -35,13 +35,13 @@ static void procesar_config_set(sweep_param_e param, uint32_t value, event_origi
 static void procesar_config_loaded(const sweep_config_t *config_nvs);
 static void enviar_valor_display(sweep_param_e param);
 static bool en_rango(sweep_param_e param, uint32_t value);
-static void procesar_sweep_start(void);
+static void procesar_sweep_start(event_origin_e origin);
 static config_result_e validar_config_completa(void);
 static void enviar_msg_display(display_msg_type_e type);
 static void enviar_cmd_sweep(sweep_cmd_e cmd_tipo);
 static void enviar_cmd_nvs_load(void);
 static void enviar_cmd_nvs_save(void);
-static void enviar_estado_uart(uart_status_e status);
+static void enviar_estado_uart(event_origin_e origin, uart_status_e status);
 static void enviar_config_uart(sweep_param_e param);
 static void pausar(void);
 static void reanudar(void);
@@ -75,24 +75,38 @@ void task_menu_config(void *pvParameters)
             case MENU_EVT_START:
                 if (estado_barrido == CONFIGURACION)
                 {
-                    procesar_sweep_start();
+                    procesar_sweep_start(ev.origin);
                 }
                 else if (estado_barrido == BARRIDO_FINALIZADO && ev.origin == EVENT_ORIGIN_UART)
                 {
                     // Por UART se reinicia el barrido sin pasar pantalla de configuracion
-                    procesar_sweep_start();
+                    procesar_sweep_start(ev.origin);
+                }
+                else
+                {
+                    enviar_estado_uart(ev.origin, UART_STATUS_INVALID_STATE);
                 }
                 break;
             case MENU_EVT_PAUSE:
                 if (estado_barrido == BARRIDO_INICIADO)
                 {
                     pausar();
+                    enviar_estado_uart(ev.origin, UART_STATUS_OK);
+                }
+                else
+                {
+                    enviar_estado_uart(ev.origin, UART_STATUS_INVALID_STATE);
                 }
                 break;
             case MENU_EVT_RESUME:
                 if (estado_barrido == BARRIDO_PAUSADO)
                 {
                     reanudar();
+                    enviar_estado_uart(ev.origin, UART_STATUS_OK);
+                }
+                else
+                {
+                    enviar_estado_uart(ev.origin, UART_STATUS_INVALID_STATE);
                 }
                 break;
             case MENU_EVT_BTN_PAUSE:
@@ -109,16 +123,22 @@ void task_menu_config(void *pvParameters)
                 if (estado_barrido == BARRIDO_INICIADO || estado_barrido == BARRIDO_PAUSADO)
                 {
                     cancelar();
+                    enviar_estado_uart(ev.origin, UART_STATUS_OK);
                 }
                 else if (estado_barrido == BARRIDO_FINALIZADO)
                 {
                     volver_a_config();
+                    enviar_estado_uart(ev.origin, UART_STATUS_OK);
+                }
+                else
+                {
+                    enviar_estado_uart(ev.origin, UART_STATUS_INVALID_STATE);
                 }
                 break;
             case MENU_EVT_BTN1:
                 if (estado_barrido == CONFIGURACION)
                 {
-                    procesar_sweep_start();
+                    procesar_sweep_start(ev.origin);
                 }
                 else if (estado_barrido == BARRIDO_INICIADO)
                 {
@@ -140,7 +160,7 @@ void task_menu_config(void *pvParameters)
                 }
                 break;
             case MENU_EVT_SWEEP_FINISHED:
-                if (estado_barrido == BARRIDO_INICIADO)
+                if (estado_barrido == BARRIDO_INICIADO || estado_barrido == BARRIDO_PAUSADO)
                 {
                     finalizar_barrido();
                 }
@@ -159,7 +179,7 @@ static void procesar_config_set(sweep_param_e param, uint32_t value, event_origi
         if (origin == EVENT_ORIGIN_UART)
         {
             // Por UART no hay popup ni cambios en pantalla, solo la respuesta
-            enviar_estado_uart(UART_STATUS_OUT_OF_RANGE);
+            enviar_estado_uart(origin, UART_STATUS_OUT_OF_RANGE);
             return;
         }
 
@@ -182,11 +202,7 @@ static void procesar_config_set(sweep_param_e param, uint32_t value, event_origi
         }
         *campo[param] = value;
         enviar_cmd_nvs_save();
-
-        if (origin == EVENT_ORIGIN_UART)
-        {
-            enviar_estado_uart(UART_STATUS_OK);
-        }
+        enviar_estado_uart(origin, UART_STATUS_OK);
     }
 
     // Se reenvia el valor nuevo o el anterior si estaba fuera de rango
@@ -248,7 +264,7 @@ static config_result_e validar_config_completa(void)
     return CONFIG_OK;
 }
 
-static void procesar_sweep_start(void)
+static void procesar_sweep_start(event_origin_e origin)
 {
     config_result_e resultado = validar_config_completa();
     display_msg_t msg = {0};
@@ -264,6 +280,7 @@ static void procesar_sweep_start(void)
         xQueueSend(queue_sweep_cmd, &cmd, portMAX_DELAY);
 
         estado_barrido = BARRIDO_INICIADO;
+        enviar_estado_uart(origin, UART_STATUS_OK);
 
         msg.type = DISPLAY_MSG_SHOW_SWEEP;
         msg.config = config;
@@ -271,6 +288,14 @@ static void procesar_sweep_start(void)
     else
     {
         ESP_LOGW(TAG, "configuracion invalida para iniciar barrido: %d", resultado);
+
+        if (origin == EVENT_ORIGIN_UART)
+        {
+            // Por UART no hay popup, solo la respuesta
+            enviar_estado_uart(origin, UART_STATUS_INVALID_CONFIG);
+            return;
+        }
+
         msg.type = DISPLAY_MSG_CONFIG_ERROR;
         msg.error = resultado;
     }
@@ -305,9 +330,14 @@ static void enviar_cmd_nvs_save(void)
     xQueueSend(queue_nvs_cmd, &cmd, portMAX_DELAY);
 }
 
-// Respuesta a un comando recibido por UART (OK o ERR)
-static void enviar_estado_uart(uart_status_e status)
+// Respuesta a un comando recibido por UART (OK o ERR). Si el evento es de origen local no se responde
+static void enviar_estado_uart(event_origin_e origin, uart_status_e status)
 {
+    if (origin != EVENT_ORIGIN_UART)
+    {
+        return;
+    }
+
     uart_tx_msg_t tx = {
         .type = UART_TX_STATUS,
         .status = status,

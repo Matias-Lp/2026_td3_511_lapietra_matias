@@ -20,10 +20,10 @@
 #define TASK_SWEEP_STACK 4096
 #define TASK_SWEEP_PRIORITY 2
 
-#define TASK_UART_STACK 2048
+#define TASK_UART_STACK 3072
 #define TASK_UART_PRIORITY 2
 
-#define TASK_NVS_STACK 2048
+#define TASK_NVS_STACK 3072
 #define TASK_NVS_PRIORITY 1
 
 #define TASK_LVGL_PRIORITY 2
@@ -68,7 +68,8 @@ typedef enum
     UART_STATUS_UNKNOWN_CMD,    // comando desconocido
     UART_STATUS_SYNTAX,         // parametro desconocido, falta valor, no numerico, linea larga
     UART_STATUS_OUT_OF_RANGE,   // valor fuera de rango
-    UART_STATUS_INVALID_CONFIG  // validacion cruzada fallida al start
+    UART_STATUS_INVALID_CONFIG, // validacion cruzada fallida al start
+    UART_STATUS_INVALID_STATE   // comando de control que no aplica al estado actual
 } uart_status_e;
 
 typedef enum
