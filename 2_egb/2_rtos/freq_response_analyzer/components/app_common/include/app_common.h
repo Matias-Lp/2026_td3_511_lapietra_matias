@@ -102,8 +102,7 @@ typedef enum
 {
     UART_TX_POINT,  // punto medido del barrido
     UART_TX_CONFIG, // respuesta a get
-    UART_TX_OK,     // comando aceptado
-    UART_TX_ERR     // comando rechazado
+    UART_TX_STATUS  // estado de un comando: OK o ERR <n>
 } uart_tx_type_e;
 
 typedef enum
@@ -179,7 +178,7 @@ typedef struct
             sweep_param_e param;
             sweep_config_t config;
         } get;            // UART_TX_CONFIG
-        uart_status_e status; // UART_TX_OK / UART_TX_ERR
+        uart_status_e status; // UART_TX_STATUS
     };
 } uart_tx_msg_t;
 

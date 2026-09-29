@@ -31,7 +31,7 @@ static uint32_t *campo[] = {
     &config.puntos, &config.tiempo};
 
 // --- Prototipos privados ---
-static void procesar_config_set(sweep_param_e param, uint32_t value);
+static void procesar_config_set(sweep_param_e param, uint32_t value, event_origin_e origin);
 static void procesar_config_loaded(const sweep_config_t *config_nvs);
 static void enviar_valor_display(sweep_param_e param);
 static bool en_rango(sweep_param_e param, uint32_t value);
@@ -41,6 +41,8 @@ static void enviar_msg_display(display_msg_type_e type);
 static void enviar_cmd_sweep(sweep_cmd_e cmd_tipo);
 static void enviar_cmd_nvs_load(void);
 static void enviar_cmd_nvs_save(void);
+static void enviar_estado_uart(uart_status_e status);
+static void enviar_config_uart(sweep_param_e param);
 static void pausar(void);
 static void reanudar(void);
 static void cancelar(void);
@@ -62,10 +64,10 @@ void task_menu_config(void *pvParameters)
             switch (ev.type)
             {
             case MENU_EVT_CONFIG_SET:
-                procesar_config_set(ev.set.param, ev.set.value);
+                procesar_config_set(ev.set.param, ev.set.value, ev.origin);
                 break;
             case MENU_EVT_CONFIG_GET:
-                // todavia no implementado
+                enviar_config_uart(ev.get_param);
                 break;
             case MENU_EVT_CONFIG_LOADED:
                 procesar_config_loaded(&ev.config);
@@ -148,11 +150,18 @@ void task_menu_config(void *pvParameters)
     }
 }
 
-static void procesar_config_set(sweep_param_e param, uint32_t value)
+static void procesar_config_set(sweep_param_e param, uint32_t value, event_origin_e origin)
 {
     if (!en_rango(param, value))
     {
         ESP_LOGW(TAG, "valor fuera de rango: param=%d value=%lu, se mantiene el valor anterior", param, value);
+
+        if (origin == EVENT_ORIGIN_UART)
+        {
+            // Por UART no hay popup ni cambios en pantalla, solo la respuesta
+            enviar_estado_uart(UART_STATUS_OUT_OF_RANGE);
+            return;
+        }
 
         display_msg_t msg_error = {
             .type = DISPLAY_MSG_CONFIG_ERROR,
@@ -173,6 +182,11 @@ static void procesar_config_set(sweep_param_e param, uint32_t value)
         }
         *campo[param] = value;
         enviar_cmd_nvs_save();
+
+        if (origin == EVENT_ORIGIN_UART)
+        {
+            enviar_estado_uart(UART_STATUS_OK);
+        }
     }
 
     // Se reenvia el valor nuevo o el anterior si estaba fuera de rango
@@ -289,6 +303,29 @@ static void enviar_cmd_nvs_save(void)
         .config = config,
     };
     xQueueSend(queue_nvs_cmd, &cmd, portMAX_DELAY);
+}
+
+// Respuesta a un comando recibido por UART (OK o ERR)
+static void enviar_estado_uart(uart_status_e status)
+{
+    uart_tx_msg_t tx = {
+        .type = UART_TX_STATUS,
+        .status = status,
+    };
+    xQueueSend(queue_uart_tx, &tx, portMAX_DELAY);
+}
+
+// Respuesta a get: se manda la config completa
+static void enviar_config_uart(sweep_param_e param)
+{
+    uart_tx_msg_t tx = {
+        .type = UART_TX_CONFIG,
+        .get = {
+            .param = param,
+            .config = config,
+        },
+    };
+    xQueueSend(queue_uart_tx, &tx, portMAX_DELAY);
 }
 
 static void pausar(void)
