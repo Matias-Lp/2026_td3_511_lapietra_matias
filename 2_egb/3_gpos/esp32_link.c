@@ -8,8 +8,6 @@
 #include <linux/serdev.h>
 #include <linux/kfifo.h>
 #include <linux/wait.h>
-#include <linux/completion.h>
-#include <linux/mutex.h>
 #include <linux/uaccess.h>
 #include <linux/err.h>
 #include <linux/string.h>
@@ -40,14 +38,6 @@ static DECLARE_WAIT_QUEUE_HEAD(rx_wait);
 static char   linebuf[MAX_LINE];
 static size_t linelen;
 
-/* Sincronismo dedicado para ioctl(ESP32_GET, ...): la misma linea que se
- * empuja siempre al kfifo de arriba, si hay un "get" pendiente, tambien se
- * copia acá y despierta a quien esta esperando esa respuesta puntual. */
-static struct completion get_done;
-static DEFINE_MUTEX(get_lock);
-static char get_response[MAX_LINE];
-static bool esperando_get;
-
 /* ===================== serdev: recepcion ===================== */
 
 static size_t esp32_receive_buf(struct serdev_device *serdev,
@@ -62,13 +52,6 @@ static size_t esp32_receive_buf(struct serdev_device *serdev,
         if (data[i] == '\n') {
             kfifo_in(&rx_fifo, linebuf, linelen);
             wake_up_interruptible(&rx_wait);
-
-            if (esperando_get) {
-                linebuf[linelen] = '\0';
-                strscpy(get_response, linebuf, sizeof(get_response));
-                complete(&get_done);
-            }
-
             linelen = 0;
         }
     }
@@ -157,77 +140,12 @@ static ssize_t esp32_write(struct file *file, const char __user *buf,
     return len; /* se consumio todo el buffer original */
 }
 
-static long esp32_ioctl_get(struct esp32_var __user *argp)
-{
-    struct esp32_var var;
-    char  msg[48];
-    char *igual;
-    long  ret;
-
-    if (copy_from_user(&var, argp, sizeof(var)))
-        return -EFAULT;
-    var.nombre[sizeof(var.nombre) - 1] = '\0';
-
-    mutex_lock(&get_lock);
-    reinit_completion(&get_done);
-    esperando_get = true;
-
-    snprintf(msg, sizeof(msg), "get %s\n", var.nombre);
-    serdev_device_write(esp32_serdev, msg, strlen(msg), msecs_to_jiffies(100));
-
-    ret = wait_for_completion_interruptible_timeout(&get_done,
-                                                     msecs_to_jiffies(500));
-    esperando_get = false;
-
-    if (ret == 0) {
-        mutex_unlock(&get_lock);
-        return -ETIMEDOUT; /* el ESP32-S3 no contesto a tiempo */
-    }
-    if (ret < 0) {
-        mutex_unlock(&get_lock);
-        return ret; /* -ERESTARTSYS: la llamada se interrumpio */
-    }
-
-    igual = strchr(get_response, '=');
-    if (!igual || kstrtoint(igual + 1, 10, &var.valor)) {
-        mutex_unlock(&get_lock);
-        return -EPROTO; /* la respuesta no tenia el formato esperado */
-    }
-    mutex_unlock(&get_lock);
-
-    return copy_to_user(argp, &var, sizeof(var)) ? -EFAULT : 0;
-}
-
-static long esp32_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-    struct esp32_var __user *argp = (struct esp32_var __user *)arg;
-    struct esp32_var var;
-    char msg[48];
-
-    switch (cmd) {
-    case ESP32_SET:
-        if (copy_from_user(&var, argp, sizeof(var)))
-            return -EFAULT;
-        var.nombre[sizeof(var.nombre) - 1] = '\0';
-        snprintf(msg, sizeof(msg), "set %s %d\n", var.nombre, var.valor);
-        serdev_device_write(esp32_serdev, msg, strlen(msg), msecs_to_jiffies(100));
-        return 0;
-
-    case ESP32_GET:
-        return esp32_ioctl_get(argp);
-
-    default:
-        return -ENOTTY; /* comando no reconocido: convencion POSIX */
-    }
-}
-
 static const struct file_operations esp32_fops = {
-    .owner          = THIS_MODULE,
-    .open           = esp32_open,
-    .release        = esp32_release,
-    .read           = esp32_read,
-    .write          = esp32_write,
-    .unlocked_ioctl = esp32_ioctl,
+    .owner   = THIS_MODULE,
+    .open    = esp32_open,
+    .release = esp32_release,
+    .read    = esp32_read,
+    .write   = esp32_write,
 };
 
 /* ===================== serdev: probe/remove ===================== */
@@ -251,8 +169,6 @@ static int esp32_probe(struct serdev_device *serdev)
     ret = kfifo_alloc(&rx_fifo, FIFO_SIZE, GFP_KERNEL);
     if (ret)
         goto err_close;
-
-    init_completion(&get_done);
 
     ret = alloc_chrdev_region(&dev_num, 0, 1, DEVICE_NAME);
     if (ret < 0) {
