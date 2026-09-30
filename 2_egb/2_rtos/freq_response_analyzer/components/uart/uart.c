@@ -293,6 +293,12 @@ static void enviar_msg(const uart_tx_msg_t *tx)
         }
         break;
 
+    case UART_TX_SWEEP_START:
+        len = snprintf(buf, sizeof(buf), "SWEEP frec_inicio=%lu frec_final=%lu puntos=%lu tiempo=%lu\n",
+                       tx->config.frec_inicio, tx->config.frec_final,
+                       tx->config.puntos, tx->config.tiempo);
+        break;
+
     default:
         ESP_LOGW(TAG, "tipo de mensaje uart_tx desconocido: %d", tx->type);
         return;

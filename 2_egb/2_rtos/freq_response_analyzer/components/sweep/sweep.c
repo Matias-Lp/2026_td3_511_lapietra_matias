@@ -168,6 +168,13 @@ static void ejecutar_barrido(const sweep_config_t *config)
 {
     ESP_LOGI(TAG, "iniciando barrido: %lu Hz a %lu Hz, %lu puntos, asentamiento %lu ms", config->frec_inicio, config->frec_final, config->puntos, config->tiempo);
 
+    // Encabezado del barrido: va por la misma cola que los POINT, asi sale antes del primero
+    uart_tx_msg_t msg_inicio = {
+        .type = UART_TX_SWEEP_START,
+        .config = *config,
+    };
+    xQueueSend(queue_uart_tx, &msg_inicio, portMAX_DELAY);
+
     uint32_t frec_anterior = 0;
     float db_anterior = 0.0f;
     for (uint32_t i = 0; i < config->puntos; i++)
