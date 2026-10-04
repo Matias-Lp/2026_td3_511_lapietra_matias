@@ -24,8 +24,8 @@
 #define MINOR_DATA 1
 #define CANT_NODOS 2
 
-#define FIFO_CMD_SIZE 1024
-#define FIFO_DATA_SIZE 32768
+#define FIFO_CMD_SIZE 128
+#define FIFO_DATA_SIZE 4096
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Lapietra - Monffyllo");
@@ -123,8 +123,7 @@ static int esp32_release(struct inode *inode, struct file *file)
     return 0;
 }
 
-static ssize_t esp32_read(struct file *file, char __user *buf,
-                          size_t len, loff_t *off)
+static ssize_t esp32_read(struct file *file, char __user *buf, size_t len, loff_t *off)
 {
     unsigned int minor = iminor(file_inode(file)); // nodo que se esta leyendo
     unsigned int copiados;
@@ -134,8 +133,7 @@ static ssize_t esp32_read(struct file *file, char __user *buf,
     {
         if (file->f_flags & O_NONBLOCK)
             return -EAGAIN;
-        if (wait_event_interruptible(nodos[minor].rx_wait,
-                                     !kfifo_is_empty(&nodos[minor].rx_fifo)))
+        if (wait_event_interruptible(nodos[minor].rx_wait, !kfifo_is_empty(&nodos[minor].rx_fifo)))
             return -ERESTARTSYS;
     }
 
@@ -146,31 +144,24 @@ static ssize_t esp32_read(struct file *file, char __user *buf,
     return copiados;
 }
 
-static ssize_t esp32_write(struct file *file, const char __user *buf,
-                           size_t len, loff_t *off)
+static ssize_t esp32_write(struct file *file, const char __user *buf, size_t len, loff_t *off)
 {
     char local[MAX_LINE];
     size_t n = len;
     int ret;
 
     if (n >= sizeof(local))
-        n = sizeof(local) - 1; /* nunca copiar mas de lo que entra en local[] */
+        n = sizeof(local) - 1; /* deja lugar para agregar el '\n' */
 
     if (copy_from_user(local, buf, n))
         return -EFAULT;
-    local[n] = '\0';
 
-    /* Asegurar el delimitador de linea que espera el firmware, sin pisar
-     * el limite del buffer local. */
-    if ((n == 0 || local[n - 1] != '\n') && n < sizeof(local) - 1)
-    {
+    /* Asegurar el delimitador de linea que espera el firmware */
+    if (n == 0 || local[n - 1] != '\n')
         local[n++] = '\n';
-        local[n] = '\0';
-    }
 
     ret = serdev_device_write(esp32_serdev, local, n, msecs_to_jiffies(1000));
-    printk(KERN_INFO "esp32_link: write() pidio %zu bytes, serdev_device_write devolvio %d\n",
-           n, ret);
+    printk(KERN_INFO "esp32_link: write() pidio %zu bytes, serdev_device_write devolvio %d\n", n, ret);
     if (ret < 0)
     {
         printk(KERN_ERR "esp32_link: serdev_device_write() fallo en write() (%d)\n", ret);
@@ -178,8 +169,7 @@ static ssize_t esp32_write(struct file *file, const char __user *buf,
     }
     if (ret != n)
     {
-        printk(KERN_WARNING "esp32_link: write parcial, se mandaron %d de %zu bytes\n",
-               ret, n);
+        printk(KERN_WARNING "esp32_link: write parcial, se mandaron %d de %zu bytes\n", ret, n);
     }
 
     return len; /* se consumio todo el buffer original */

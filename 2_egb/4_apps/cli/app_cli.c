@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "esp32_link.h"
+#include "../../3_gpos/esp32_link.h"
 
 #define ESP32_DEV_CMD "/dev/esp32link_cmd"
 #define ESP32_DEV_DATA "/dev/esp32link_data"
@@ -102,30 +102,34 @@ static int procesar_datos(const char *linea)
  * sin que se mezcle la salida. Al completarse muestra la tabla. */
 static void *hilo_monitor(void *arg)
 {
-    char buf[MAX_LINE];
-    size_t n = 0;
-    char c;
+    char buf[MAX_LINE];   /* lo que trae cada read */
+    char linea[MAX_LINE]; /* la linea que se va armando */
+    size_t n = 0;         /* caracteres guardados en linea */
+    ssize_t leidos;       /* bytes que trajo el read */
 
-    while (read(fd_data, &c, 1) > 0)
+    while ((leidos = read(fd_data, buf, sizeof(buf))) > 0)
     {
-        if (c != '\n')
+        for (ssize_t k = 0; k < leidos; k++)
         {
-            if (n < sizeof(buf) - 1)
-                buf[n++] = c;
-        }
-        else
-        {
-            buf[n] = '\0';
-            n = 0;
-            pthread_mutex_lock(&consola);
-            if (procesar_datos(buf))
+            if (buf[k] != '\n')
             {
-                printf("\n[barrido completo: %d puntos]\n", barrido.recibidos);
-                imprimir_tabla(1);
-                printf(PROMPT);
-                fflush(stdout);
+                if (n < sizeof(linea) - 1)
+                    linea[n++] = buf[k];
             }
-            pthread_mutex_unlock(&consola);
+            else
+            {
+                linea[n] = '\0';
+                n = 0;
+                pthread_mutex_lock(&consola);
+                if (procesar_datos(linea))
+                {
+                    printf("\n[barrido completo: %d puntos]\n", barrido.recibidos);
+                    imprimir_tabla(1);
+                    printf(PROMPT);
+                    fflush(stdout);
+                }
+                pthread_mutex_unlock(&consola);
+            }
         }
     }
     return NULL;
@@ -134,25 +138,19 @@ static void *hilo_monitor(void *arg)
 /* ===================== comandos al ESP32 ===================== */
 
 /* Espera la respuesta del ESP32 en /dev/esp32link_cmd. Si no hay nada se espera 10 ms y
- * se reintenta, hasta 100 veces (1 s). Devuelve 0 si llego una linea completa y -1 si no. */
+ * se reintenta, hasta 50 veces (500 ms). Devuelve 0 si llego una linea completa y -1 si no. */
 static int esperar_respuesta(char *resp, size_t tam)
 {
-    size_t n = 0; /* cuantos caracteres de la respuesta van guardados */
-    char c;       /* el byte que se acaba de leer */
-    int intentos;
+    ssize_t n;
 
-    for (intentos = 0; intentos < 100; intentos++)
+    for (int intentos = 0; intentos < 50; intentos++)
     {
-        // Lee todo lo que haya ahora en el fifo de a un byte
-        while (read(fd_cmd, &c, 1) > 0)
+        if ((n = read(fd_cmd, resp, tam - 1)) > 0)
         {
-            if (c == '\n')
-            {
-                resp[n] = '\0';
-                return 0;
-            }
-            if (n < tam - 1)
-                resp[n++] = c;
+            resp[n] = '\0';
+            if (resp[n - 1] == '\n')
+                resp[n - 1] = '\0';
+            return 0;
         }
         usleep(10000);
     }
@@ -225,7 +223,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Todavia no hay otro hilo: no hace falta el mutex */
     printf("app_cli: escribir 'ayuda' para ver comandos\n" PROMPT);
     fflush(stdout);
     pthread_create(&monitor, NULL, hilo_monitor, NULL);
