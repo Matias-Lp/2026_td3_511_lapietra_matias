@@ -1,9 +1,8 @@
-#define _DEFAULT_SOURCE
-
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>
 #include <pthread.h>
 
 #include "../../3_gpos/esp32_link.h"
@@ -13,6 +12,7 @@
 
 #define MAX_PUNTOS 512
 #define PROMPT "app_cli> "
+#define TIMEOUT_RESP_MS 1000
 
 static int fd_cmd, fd_data;
 static pthread_mutex_t consola = PTHREAD_MUTEX_INITIALIZER;
@@ -57,9 +57,14 @@ static void imprimir_tabla(int con_puntos)
            barrido.frec_inicio, barrido.frec_final, barrido.puntos, barrido.tiempo);
     if (con_puntos)
     {
-        printf("%5s  %10s  %8s\n", "i", "freq (Hz)", "dB");
+        printf("%10s  %8s\n", "freq (Hz)", "dB");
         for (k = 0; k < barrido.recibidos; k++)
-            printf("%5d  %10ld  %8.2f\n", barrido.pts[k].i, barrido.pts[k].freq, barrido.pts[k].db);
+        {
+            if (k == 0 || barrido.pts[k].freq != barrido.pts[k - 1].freq)
+            {
+                printf("%10ld  %8.2f\n", barrido.pts[k].freq, barrido.pts[k].db);
+            }
+        }
     }
     printf("recibidos: %d/%ld\n", barrido.recibidos, barrido.puntos);
 }
@@ -137,34 +142,37 @@ static void *hilo_monitor(void *arg)
 
 /* ===================== comandos al ESP32 ===================== */
 
-/* Espera la respuesta del ESP32 en /dev/esp32link_cmd. Si no hay nada se espera 10 ms y
- * se reintenta, hasta 50 veces (500 ms). Devuelve 0 si llego una linea completa y -1 si no. */
+/* Espera con poll() hasta TIMEOUT_RESP_MS a que haya respuesta en
+ * /dev/esp32link_cmd. Devuelve 0 si llego una linea y -1 si vencio el
+ * timeout o hubo un error. */
 static int esperar_respuesta(char *resp, size_t tam)
 {
+    struct pollfd pollfd_cmd = {.fd = fd_cmd, .events = POLLIN};
     ssize_t n;
 
-    for (int intentos = 0; intentos < 50; intentos++)
-    {
-        if ((n = read(fd_cmd, resp, tam - 1)) > 0)
-        {
-            resp[n] = '\0';
-            if (resp[n - 1] == '\n')
-                resp[n - 1] = '\0';
-            return 0;
-        }
-        usleep(10000);
-    }
-    return -1;
+    if (poll(&pollfd_cmd, 1, TIMEOUT_RESP_MS) <= 0)
+        return -1;
+
+    /* poll() aviso que hay datos: el read no se bloquea */
+    n = read(fd_cmd, resp, tam - 1);
+    if (n <= 0)
+        return -1;
+
+    resp[n] = '\0';
+    if (resp[n - 1] == '\n')
+        resp[n - 1] = '\0';
+    return 0;
 }
 
 static void enviar_comando(const char *linea)
 {
+    struct pollfd pollfd_cmd = {.fd = fd_cmd, .events = POLLIN};
     char resp[MAX_LINE];
     int codigo;
 
     /* Descarta respuestas viejas: la primera linea que llegue despues
      * del write tiene que ser la de este comando */
-    while (read(fd_cmd, resp, sizeof(resp)) > 0)
+    while (poll(&pollfd_cmd, 1, 0) > 0 && read(fd_cmd, resp, sizeof(resp)) > 0)
         ;
 
     if (write(fd_cmd, linea, strlen(linea)) < 0)
@@ -210,7 +218,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    fd_cmd = open(ESP32_DEV_CMD, O_RDWR | O_NONBLOCK);
+    fd_cmd = open(ESP32_DEV_CMD, O_RDWR);
     if (fd_cmd < 0)
     {
         perror("open " ESP32_DEV_CMD);

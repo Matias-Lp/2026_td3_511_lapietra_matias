@@ -8,6 +8,7 @@
 #include <linux/serdev.h>
 #include <linux/kfifo.h>
 #include <linux/wait.h>
+#include <linux/poll.h>
 #include <linux/uaccess.h>
 #include <linux/err.h>
 #include <linux/string.h>
@@ -144,6 +145,21 @@ static ssize_t esp32_read(struct file *file, char __user *buf, size_t len, loff_
     return copiados;
 }
 
+/* poll()/select() desde usuario: se registra en la misma wait_queue que
+ * despierta receive_buf(), asi el proceso se despierta cuando llega una
+ * linea. Hay datos para leer si el fifo del nodo no esta vacio */
+static __poll_t esp32_poll(struct file *file, poll_table *wait)
+{
+    unsigned int minor = iminor(file_inode(file));
+    __poll_t mask = 0;
+
+    poll_wait(file, &nodos[minor].rx_wait, wait);
+
+    if (!kfifo_is_empty(&nodos[minor].rx_fifo))
+        mask |= EPOLLIN;
+    return mask;
+}
+
 static ssize_t esp32_write(struct file *file, const char __user *buf, size_t len, loff_t *off)
 {
     char local[MAX_LINE];
@@ -181,7 +197,16 @@ static const struct file_operations esp32_fops = {
     .release = esp32_release,
     .read = esp32_read,
     .write = esp32_write,
+    .poll = esp32_poll,
 };
+
+/* Permisos de los nodos al crearlos: cmd lectura/escritura para todos, data solo lectura */
+static char *esp32_devnode(const struct device *dev, umode_t *mode)
+{
+    if (mode)
+        *mode = (MINOR(dev->devt) == MINOR_DATA) ? 0444 : 0666;
+    return NULL;
+}
 
 /* ===================== serdev: probe/remove ===================== */
 
@@ -237,6 +262,7 @@ static int esp32_probe(struct serdev_device *serdev)
         ret = PTR_ERR(esp32_class);
         goto err_cdev;
     }
+    esp32_class->devnode = esp32_devnode; /* antes de device_create */
 
     esp32_device = device_create(esp32_class, NULL, MKDEV(MAJOR(dev_num), MINOR_CMD), NULL, DEVICE_NAME_CMD);
     if (IS_ERR(esp32_device))
