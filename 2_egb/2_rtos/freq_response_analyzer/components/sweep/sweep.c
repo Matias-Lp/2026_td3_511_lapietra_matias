@@ -11,6 +11,7 @@
 #define SWEEP_RST_VIN GPIO_NUM_6
 #define SWEEP_RST_VO GPIO_NUM_16
 #define SWEEP_RESET_PULSO_MS 10
+#define SWEEP_RESET_REANUDAR_MS 20
 #define SWEEP_MUESTRAS 10  // cantidad de lecturas de ADC por frecuencia
 #define SWEEP_VIN_MIN_MV 1 // minimo valor aceptable del ADC, evita log10(0) con vin = 0
 
@@ -19,7 +20,7 @@ static const char *TAG = "sweep";
 
 // --- Prototipos privados ---
 static void inicializar_gpio(void);
-static void resetear_detectores_pico(void);
+static void resetear_detectores_pico(uint32_t pulso_ms);
 static uint32_t calcular_frecuencia(uint32_t frec_inicio, uint32_t frec_final, uint32_t puntos, uint32_t i);
 static bool medir_punto(uint32_t frec_hz, uint32_t tiempo_asentamiento_ms, float *db);
 static bool esperar_resume_o_cancelar(void);
@@ -56,13 +57,15 @@ static void inicializar_gpio(void)
     gpio_set_level(SWEEP_RST_VO, 0);
 }
 
-static void resetear_detectores_pico(void)
+static void resetear_detectores_pico(uint32_t pulso_ms)
 {
+    ad9833_disable_output(); // apagar DDS antes del reset del detector de pico
     gpio_set_level(SWEEP_RST_VIN, 1);
     gpio_set_level(SWEEP_RST_VO, 1);
-    vTaskDelay(pdMS_TO_TICKS(SWEEP_RESET_PULSO_MS));
+    vTaskDelay(pdMS_TO_TICKS(pulso_ms));
     gpio_set_level(SWEEP_RST_VIN, 0);
     gpio_set_level(SWEEP_RST_VO, 0);
+    ad9833_enable_output();
 }
 
 // paso logaritmico
@@ -85,9 +88,7 @@ static uint32_t calcular_frecuencia(uint32_t frec_inicio, uint32_t frec_final, u
 static bool medir_punto(uint32_t frec_hz, uint32_t tiempo_asentamiento_ms, float *db)
 {
     ad9833_set_freq(frec_hz);
-    ad9833_disable_output(); // apagar DDS antes del reset del detector de pico
-    resetear_detectores_pico();
-    ad9833_enable_output(); // encender DDS y espero tiempo de asentamiento
+    resetear_detectores_pico(SWEEP_RESET_PULSO_MS);
 
     // Esperar tiempo de asentamiento mientras reviso comandos de pausa o cancelacion
     if (atender_pausa_y_cancelar(frec_hz, pdMS_TO_TICKS(tiempo_asentamiento_ms)))
@@ -140,20 +141,24 @@ static bool esperar_resume_o_cancelar()
 static bool atender_pausa_y_cancelar(uint32_t frec_hz, TickType_t ticks_espera)
 {
     sweep_cmd_msg_t cmd;
-    if (xQueueReceive(queue_sweep_cmd, &cmd, ticks_espera) != pdTRUE)
-    {
-        return false;
-    }
 
-    if (cmd.cmd == SWEEP_CMD_CANCEL)
+    // Mientras lleguen comandos se atienden y se vuelve a esperar el tiempo completo
+    while (xQueueReceive(queue_sweep_cmd, &cmd, ticks_espera) == pdTRUE)
     {
-        return true;
-    }
+        if (cmd.cmd == SWEEP_CMD_CANCEL)
+        {
+            return true;
+        }
 
-    if (cmd.cmd == SWEEP_CMD_PAUSE)
-    {
-        ESP_LOGI(TAG, "barrido pausado en %lu Hz", frec_hz);
-        return esperar_resume_o_cancelar();
+        if (cmd.cmd == SWEEP_CMD_PAUSE)
+        {
+            ESP_LOGI(TAG, "barrido pausado en %lu Hz", frec_hz);
+            if (esperar_resume_o_cancelar())
+            {
+                return true;
+            }
+            resetear_detectores_pico(SWEEP_RESET_REANUDAR_MS);
+        }
     }
 
     return false;
@@ -162,6 +167,13 @@ static bool atender_pausa_y_cancelar(uint32_t frec_hz, TickType_t ticks_espera)
 static void ejecutar_barrido(const sweep_config_t *config)
 {
     ESP_LOGI(TAG, "iniciando barrido: %lu Hz a %lu Hz, %lu puntos, asentamiento %lu ms", config->frec_inicio, config->frec_final, config->puntos, config->tiempo);
+
+    // Encabezado del barrido: va por la misma cola que los POINT, asi sale antes del primero
+    uart_tx_msg_t msg_inicio = {
+        .type = UART_TX_SWEEP_START,
+        .config = *config,
+    };
+    xQueueSend(queue_uart_tx, &msg_inicio, portMAX_DELAY);
 
     uint32_t frec_anterior = 0;
     float db_anterior = 0.0f;
@@ -175,29 +187,33 @@ static void ejecutar_barrido(const sweep_config_t *config)
             db = db_anterior; // Se mantiene el valor anterior
         }
         else
-        {            
+        {
             if (medir_punto(frec_hz, config->tiempo, &db))
             {
+                ad9833_disable_output();
                 ESP_LOGI(TAG, "barrido cancelado");
-                break;
+                return;
             }
-        }        
+        }
 
-        display_msg_t msg_disp = {
-            .type = DISPLAY_MSG_SWEEP_POINT,
+        sweep_point_t punto = {
+            .index = i,
             .freq_hz = frec_hz,
             .db = db,
         };
+
+        display_msg_t msg_disp = {
+            .type = DISPLAY_MSG_SWEEP_POINT,
+            .point = punto,
+        };
         xQueueSend(queue_display, &msg_disp, portMAX_DELAY);
 
-        if (frec_hz != frec_anterior) //no enviar puntos repetidos por UART
-        {
-            uart_tx_msg_t msg_uart = {
-                .freq_hz = frec_hz,
-                .db = db,
-            };
-            xQueueSend(queue_uart_tx, &msg_uart, portMAX_DELAY);
-        }
+        // se envian todos los puntos, incluso los repetidos, para que el receptor detecte faltantes por el indice
+        uart_tx_msg_t msg_uart = {
+            .type = UART_TX_POINT,
+            .point = punto,
+        };
+        xQueueSend(queue_uart_tx, &msg_uart, portMAX_DELAY);
 
         frec_anterior = frec_hz;
         db_anterior = db;
@@ -206,6 +222,9 @@ static void ejecutar_barrido(const sweep_config_t *config)
     ad9833_disable_output();
     ESP_LOGI(TAG, "barrido finalizado");
 
-    menu_event_msg_t ev = {.type = MENU_EVT_SWEEP_FINISHED};
+    menu_event_msg_t ev = {
+        .type = MENU_EVT_SWEEP_FINISHED,
+        .origin = EVENT_ORIGIN_LOCAL,
+    };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }

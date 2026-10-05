@@ -9,7 +9,8 @@
 void ui_event_btn_start(lv_event_t *e)
 {
     menu_event_msg_t ev = {
-        .type = MENU_EVT_BTN_START,
+        .type = MENU_EVT_START,
+        .origin = EVENT_ORIGIN_LOCAL,
     };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }
@@ -18,6 +19,7 @@ void ui_event_btn_pausar(lv_event_t *e)
 {
     menu_event_msg_t ev = {
         .type = MENU_EVT_BTN_PAUSE,
+        .origin = EVENT_ORIGIN_LOCAL,
     };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }
@@ -30,7 +32,8 @@ void ui_event_cfg_popup_ok(lv_event_t *e)
 void ui_event_btn_cancelar(lv_event_t *e)
 {
     menu_event_msg_t ev = {
-        .type = MENU_EVT_BTN_CANCEL,
+        .type = MENU_EVT_CANCEL,
+        .origin = EVENT_ORIGIN_LOCAL,
     };
     xQueueSend(queue_menu_events, &ev, portMAX_DELAY);
 }
