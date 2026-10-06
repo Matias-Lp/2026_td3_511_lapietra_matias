@@ -14,6 +14,10 @@
 #define PROMPT "app_cli> "
 #define TIMEOUT_RESP_MS 1000
 
+#define LINEA_DOBLE "==================================================================\n"
+#define LINEA_SIMPLE "------------------------------------------------------------------\n"
+
+
 static int fd_cmd, fd_data;
 static pthread_mutex_t consola = PTHREAD_MUTEX_INITIALIZER;
 
@@ -193,15 +197,25 @@ static void enviar_comando(const char *linea)
 
 static void uso(void)
 {
-    printf("Comandos del ESP32:\n"
-           "  set <param> <valor>\n"
-           "  get <param> | get config\n"
-           "  start | pause | resume | cancel\n"
-           "Comandos locales:\n"
-           "  ayuda | estado | datos | salir\n"
-           "Parametros:\n"
-           "  frec_inicio 10 - 99999 Hz    frec_final 11 - 100000 Hz\n"
-           "  puntos      2 - 512          tiempo     10 - 10000 ms (asentamiento)\n");
+    printf("\n" LINEA_DOBLE
+           "              ANALIZADOR DE RESPUESTA EN FRECUENCIA\n" LINEA_DOBLE
+           " Comandos del ESP32\n" LINEA_SIMPLE
+           "  set <param> <valor>     modifica un parametro del barrido\n"
+           "  get <param>             consulta un parametro\n"
+           "  get config              consulta la configuracion completa\n"
+           "  start                   inicia el barrido\n"
+           "  pause | resume          pausa o reanuda el barrido\n"
+           "  cancel                  cancela el barrido\n" LINEA_SIMPLE
+           " Comandos locales\n" LINEA_SIMPLE
+           "  ayuda                   muestra esta ayuda\n"
+           "  estado                  configuracion del ultimo barrido\n"
+           "  datos                   tabla de puntos del ultimo barrido\n"
+           "  salir                   cierra la aplicacion\n" LINEA_SIMPLE
+           " Parametros               Rango\n" LINEA_SIMPLE
+           "  frec_inicio             10 - 99999 Hz\n"
+           "  frec_final              11 - 100000 Hz\n"
+           "  puntos                  2 - 512\n"
+           "  tiempo                  10 - 10000 ms (asentamiento)\n" LINEA_DOBLE);
 }
 
 /* ===================== main ===================== */
