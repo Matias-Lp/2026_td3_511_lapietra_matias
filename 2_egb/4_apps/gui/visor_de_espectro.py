@@ -21,6 +21,7 @@ ESP32_DEV_DATA = "/dev/esp32link_data"
 MAX_LINE = 128  # mismo valor que en 3_gpos/esp32_link.h
 MAX_PUNTOS = 512
 TIMEOUT_RESP_MS = 1000
+TIMEOUT_LIMPIEZA_MS = 200
 DB_MIN_INICIAL = -9  # valor con el que el eje de dB inicia, luego se agranda si no entra en ese rango
 
 fd_cmd = -1
@@ -110,15 +111,20 @@ def esperar_respuesta():
     return os.read(fd_cmd, MAX_LINE).decode(errors="ignore").strip()
 
 
-def enviar_comando(linea):
-    """Manda un comando al ESP32 y devuelve el texto de la respuesta."""
+def limpiar_cmd(timeout_ms):
+    """Lee y descarta todo lo que haya en /dev/esp32link_cmd hasta que pasen
+    timeout_ms sin que llegue nada."""
     p = select.poll()
     p.register(fd_cmd, select.POLLIN)
+    while p.poll(timeout_ms):
+        os.read(fd_cmd, MAX_LINE)
 
+
+def enviar_comando(linea):
+    """Manda un comando al ESP32 y devuelve el texto de la respuesta."""
     # Descarta respuestas viejas: la primera linea que llegue despues
     # del write tiene que ser la de este comando
-    while p.poll(0):
-        os.read(fd_cmd, MAX_LINE)
+    limpiar_cmd(0)
 
     try:
         os.write(fd_cmd, linea.encode())  # el driver agrega el '\n'
@@ -300,6 +306,9 @@ def main():
     except OSError as e:
         print(f"open: {e}")
         return 1
+
+    # Descarta la basura que haya quedado en cmd por arranque del ESP32 o mensajes anteriores
+    limpiar_cmd(TIMEOUT_LIMPIEZA_MS)
 
     app = QApplication(sys.argv)
     ventana = Ventana()
