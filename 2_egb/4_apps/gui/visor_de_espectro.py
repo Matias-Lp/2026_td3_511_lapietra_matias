@@ -9,7 +9,9 @@ import select
 import sys
 import threading
 
-from PySide6.QtCore import QObject, Signal
+os.environ.setdefault("QT_XCB_GL_INTEGRATION", "none")
+
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import (QApplication, QFormLayout, QHBoxLayout, QLabel,
                                QMainWindow, QPushButton, QSpinBox, QVBoxLayout,
                                QWidget)
@@ -23,6 +25,7 @@ MAX_PUNTOS = 512
 TIMEOUT_RESP_MS = 1000
 TIMEOUT_LIMPIEZA_MS = 200
 DB_MIN_INICIAL = -9  # valor con el que el eje de dB inicia, luego se agranda si no entra en ese rango
+REFRESCO_MS = 50  # el grafico se redibuja cada REFRESCO_MS
 
 fd_cmd = -1
 fd_data = -1
@@ -150,7 +153,7 @@ class Ventana(QMainWindow):
         self.resize(1050, 560)
 
         # Grafico: dB en funcion de la frecuencia, eje X logaritmico
-        pg.setConfigOptions(antialias=True)
+        pg.setConfigOptions(antialias=False)
         self.grafico = pg.PlotWidget()
         self.grafico.setBackground("w")
         self.grafico.showGrid(x=True, y=True, alpha=0.3)
@@ -210,6 +213,11 @@ class Ventana(QMainWindow):
         central.setLayout(layout)
         self.setCentralWidget(central)
 
+        self.pendiente = False
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.refrescar)
+        self.timer.start(REFRESCO_MS)
+
     @staticmethod
     def agregar_boton(panel, texto, accion):
         boton = QPushButton(texto)
@@ -253,6 +261,7 @@ class Ventana(QMainWindow):
         self.comando("cancel")
         barrido.puntos = 0
         barrido.pts = []
+        self.pendiente = False
         self.curva.setData([], [])
         self.grafico.setYRange(DB_MIN_INICIAL, 0)
         self.lbl_recibidos.setText("")
@@ -282,10 +291,18 @@ class Ventana(QMainWindow):
     # ---------- datos ----------
 
     def nueva_linea(self, linea):
-        completo = procesar_datos(linea)
+        procesar_datos(linea)
         if linea.startswith("SWEEP"):  # barrido nuevo: eje X y spinbox toman su config
             self.eje_frecuencia(barrido.frec_inicio, barrido.frec_final)
             self.cargar_valores(linea)
+        self.pendiente = True
+
+    def refrescar(self):
+        """Redibuja el grafico y el label si llegaron datos desde el ultimo refresco."""
+        if not self.pendiente:
+            return
+        self.pendiente = False
+        completo = 0 < barrido.puntos == len(barrido.pts)
 
         dbs = [db for _, db in barrido.pts]
         frecs = [f for f, _ in barrido.pts]
